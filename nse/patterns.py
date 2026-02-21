@@ -41,7 +41,7 @@ def is_inverted_hammer(
     lower_shadow = body_bottom - low
 
     if body == 0:
-        body = full_range * 0.01  # treat doji-like candles with tiny body
+        body = full_range * 0.01
 
     if upper_shadow < body * body_ratio:
         return False
@@ -49,7 +49,6 @@ def is_inverted_hammer(
     if lower_shadow > body * lower_shadow_tolerance:
         return False
 
-    # Body should sit in the lower third of the range
     if (body_bottom - low) > full_range * 0.33:
         return False
 
@@ -66,22 +65,19 @@ def has_prior_downtrend(closes: pd.Series, lookback: int = 3) -> bool:
 
 def detect_inverted_hammer(df: pd.DataFrame) -> bool:
     """
-    Given a DataFrame of daily OHLC data (columns: Open, High, Low, Close),
-    return True if the *latest completed candle* is an Inverted Hammer
+    Return True if the latest candle is an Inverted Hammer
     following a short-term downtrend.
     """
     if df is None or len(df) < 5:
         return False
 
     latest = df.iloc[-1]
-
     candle_match = is_inverted_hammer(
         open_=latest["Open"],
         high=latest["High"],
         low=latest["Low"],
         close=latest["Close"],
     )
-
     if not candle_match:
         return False
 
@@ -89,10 +85,7 @@ def detect_inverted_hammer(df: pd.DataFrame) -> bool:
 
 
 def detect_inverted_hammer_history(df: pd.DataFrame, lookback_days: int = 15) -> list[dict]:
-    """
-    Scan the last `lookback_days` candles for Inverted Hammer patterns.
-    Returns a list of dicts with candle details for each match.
-    """
+    """Scan the last `lookback_days` candles for Inverted Hammer patterns."""
     if df is None or len(df) < 5:
         return []
 
@@ -132,7 +125,7 @@ def detect_inverted_hammer_history(df: pd.DataFrame, lookback_days: int = 15) ->
 
 
 def scan_dataframe(df: pd.DataFrame) -> dict:
-    """Return diagnostic info for the latest candle (useful for logging/debugging)."""
+    """Return diagnostic info for the latest candle."""
     if df is None or len(df) < 1:
         return {}
 
