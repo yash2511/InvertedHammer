@@ -3,16 +3,18 @@
 Stock & Forex Scanner — Main entry point.
 
 Usage:
-    python main.py --nse             # NSE Inverted Hammer scan (today)
-    python main.py --nse-history 15  # NSE scan over last 15 days
-    python main.py --forex           # Forex/Crypto NW Envelope scan (15min)
-    python main.py --all             # Run both NSE + Forex scans
-    python main.py                   # Start scheduled daily scanner
+    python main.py --nse              # NSE Inverted Hammer scan (today)
+    python main.py --nse-history 15   # NSE scan over last 15 days
+    python main.py --forex            # Forex scan once (hammer at band)
+    python main.py --forex-live       # Forex live monitor — checks every 15 min
+    python main.py --all              # Run both NSE + Forex once
+    python main.py                    # Start scheduled daily NSE scanner
 """
 
 import argparse
 import logging
 import time
+from datetime import datetime
 
 import schedule
 
@@ -41,26 +43,28 @@ def job_nse():
 
 
 def job_forex():
-    """Run Forex/Crypto NW Envelope scan."""
-    logger.info("=" * 50)
-    logger.info("FOREX scan triggered")
-    logger.info("=" * 50)
+    """Run Forex scan — only alerts when hammer forms at band."""
+    logger.info("─" * 50)
+    logger.info("FOREX scan at %s", datetime.now().strftime("%H:%M:%S"))
+    logger.info("─" * 50)
     signals = run_nw_scan()
-    send_forex_alert(signals)
-    logger.info("FOREX: %d signal(s)", len(signals))
-
-
-def job_all():
-    """Run both scanners."""
-    job_nse()
-    job_forex()
+    if signals:
+        send_forex_alert(signals)
+        for s in signals:
+            print(f"  {s['direction']:5s}  {s['instrument']:12s}  Hammer {s['band_position']} {s['band']} band  Close: {s['close']}")
+    else:
+        logger.info("No hammer at band right now.")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Stock & Forex Scanner")
     parser.add_argument("--nse", action="store_true", help="Run NSE Inverted Hammer scan now")
-    parser.add_argument("--forex", action="store_true", help="Run Forex/Crypto NW Envelope scan now")
-    parser.add_argument("--all", action="store_true", help="Run both NSE + Forex scans now")
+    parser.add_argument("--forex", action="store_true", help="Run Forex scan once (hammer at band)")
+    parser.add_argument(
+        "--forex-live", action="store_true",
+        help="Forex live monitor — scans every 15 min, alerts only on hammer at band",
+    )
+    parser.add_argument("--all", action="store_true", help="Run both NSE + Forex once")
     parser.add_argument(
         "--nse-history", type=int, nargs="?", const=15, metavar="DAYS",
         help="NSE: scan last N days for Inverted Hammer (default: 15)",
@@ -69,7 +73,8 @@ def main():
 
     if args.all:
         logger.info("Running ALL scans...")
-        job_all()
+        job_nse()
+        job_forex()
         return
 
     if args.nse:
@@ -78,8 +83,27 @@ def main():
         return
 
     if args.forex:
-        logger.info("Running FOREX scan (15min charts)...")
+        logger.info("Running FOREX scan (one-time)...")
         job_forex()
+        return
+
+    if args.forex_live:
+        logger.info("=" * 50)
+        logger.info("FOREX LIVE MONITOR STARTED")
+        logger.info("Checking every 15 minutes for Hammer at NW Band")
+        logger.info("Instruments: Forex, BTC, ETH, Gold, Silver")
+        logger.info("Alerts ONLY when Inverted Hammer at band")
+        logger.info("=" * 50)
+
+        job_forex()  # run immediately on start
+        schedule.every(15).minutes.do(job_forex)
+
+        try:
+            while True:
+                schedule.run_pending()
+                time.sleep(10)
+        except KeyboardInterrupt:
+            logger.info("Forex monitor stopped.")
         return
 
     if args.nse_history:
@@ -96,21 +120,16 @@ def main():
             print(f"\nNo patterns in the last {days} days.")
         return
 
-    # No flags → scheduled mode
-    logger.info("Scanner started (scheduled mode)")
-    logger.info("NSE scan   : %s daily (Mon-Fri)", SCAN_TIME)
-    logger.info("FOREX scan : every 4 hours (Mon-Fri)")
+    # No flags → scheduled NSE only
+    logger.info("NSE Scanner started (scheduled mode)")
+    logger.info("Scan time: %s daily (Mon-Fri)", SCAN_TIME)
     logger.info("Waiting...\n")
 
-    # NSE: once daily at configured time
     schedule.every().monday.at(SCAN_TIME).do(job_nse)
     schedule.every().tuesday.at(SCAN_TIME).do(job_nse)
     schedule.every().wednesday.at(SCAN_TIME).do(job_nse)
     schedule.every().thursday.at(SCAN_TIME).do(job_nse)
     schedule.every().friday.at(SCAN_TIME).do(job_nse)
-
-    # FOREX: every 4 hours on weekdays
-    schedule.every(4).hours.do(job_forex)
 
     try:
         while True:

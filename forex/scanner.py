@@ -1,6 +1,7 @@
 """
 Forex / Crypto / Commodities Scanner
-NW Envelope + Inverted Hammer on 15-minute charts.
+Checks every 15 min for Inverted Hammer at NW Envelope bands.
+Only triggers when hammer candle forms at upper or lower band.
 """
 
 import logging
@@ -9,7 +10,7 @@ from datetime import datetime
 import yfinance as yf
 import pandas as pd
 
-from forex.nw_envelope import compute_envelope, detect_signals
+from forex.nw_envelope import compute_envelope, detect_hammer_at_bands
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,14 @@ def fetch_15min(symbol: str, period: str = "5d") -> pd.DataFrame | None:
 
 
 def run_nw_scan() -> list[dict]:
-    """Scan all instruments on 15-min chart with NW Envelope + Hammer detection."""
+    """
+    Scan all instruments on 15-min chart.
+    ONLY returns signals when Inverted Hammer forms at a band.
+    """
     all_signals: list[dict] = []
 
     logger.info(
-        "FOREX: Starting NW Envelope scan of %d instruments at %s",
+        "FOREX: Scanning %d instruments at %s",
         len(INSTRUMENTS),
         datetime.now().strftime("%H:%M:%S"),
     )
@@ -74,14 +78,17 @@ def run_nw_scan() -> list[dict]:
             atr_period=NW_ATR_PERIOD,
         )
 
-        signals = detect_signals(envelope_df)
+        signals = detect_hammer_at_bands(envelope_df)
 
         for sig in signals:
             sig["instrument"] = name
             sig["ticker"] = ticker
             sig["time"] = str(envelope_df.index[-1])
             all_signals.append(sig)
-            logger.info("FOREX SIGNAL: %s %s — %s", sig["type"], name, sig["reason"])
+            logger.info(
+                "ALERT: %s — %s [%s band]",
+                name, sig["type"], sig["band"],
+            )
 
-    logger.info("FOREX scan complete. %d signal(s) found.", len(all_signals))
+    logger.info("FOREX scan done. %d hammer-at-band signal(s).", len(all_signals))
     return all_signals

@@ -1,20 +1,12 @@
 """
-Nadaraya-Watson Envelope Strategy
+Nadaraya-Watson Envelope + Inverted Hammer Strategy
 
-Replicates the TradingView "Nadaraya-Watson Envelope" indicator.
+Only triggers alerts when an Inverted Hammer candle forms at the
+upper or lower NW Envelope band on 15-minute charts.
 
-How it works:
-    1. Kernel regression smooths price using a Gaussian (RBF) kernel
-    2. Upper/lower envelopes are created using ATR-based multiplier
-    3. Combined with Inverted Hammer detection at envelope boundaries
-
-Signal hierarchy:
-    STRONG BUY  → Inverted Hammer at lower envelope (highest confidence)
-    BUY         → Price crossed below lower envelope
-    SELL        → Price crossed above upper envelope
-    WATCH BUY   → Hammer forming near lower envelope
-    NEAR BUY    → Price approaching lower envelope
-    NEAR SELL   → Price approaching upper envelope
+Signal types:
+    HAMMER AT LOWER BAND → Bullish reversal (potential BUY)
+    HAMMER AT UPPER BAND → Rejection wick at resistance (potential SELL)
 """
 
 import numpy as np
@@ -22,7 +14,6 @@ import pandas as pd
 
 
 def gaussian_kernel(x: np.ndarray, bandwidth: float) -> np.ndarray:
-    """Gaussian (RBF) kernel: K(u) = exp(-u² / (2h²))"""
     return np.exp(-x ** 2 / (2 * bandwidth ** 2))
 
 
@@ -77,7 +68,7 @@ def compute_envelope(
     atr_period: int = 14,
     lookback: int = 500,
 ) -> pd.DataFrame:
-    """Compute the full Nadaraya-Watson Envelope. Adds: nw_mid, nw_upper, nw_lower, atr."""
+    """Compute NW Envelope. Adds: nw_mid, nw_upper, nw_lower, atr."""
     source = df["Close"].values.astype(float)
     high = df["High"].values.astype(float)
     low = df["Low"].values.astype(float)
@@ -93,8 +84,6 @@ def compute_envelope(
 
     return result
 
-
-# --- Inverted Hammer detection (inlined to keep forex/ self-contained) ---
 
 def _is_inverted_hammer(o: float, h: float, l: float, c: float) -> bool:
     """Check if a single candle is an Inverted Hammer shape."""
@@ -121,134 +110,70 @@ def _is_inverted_hammer(o: float, h: float, l: float, c: float) -> bool:
     return True
 
 
-def _has_prior_downtrend(closes: pd.Series, lookback: int = 3) -> bool:
-    """Check for short-term downtrend before the signal candle."""
-    if len(closes) < lookback + 1:
-        return False
-    recent = closes.iloc[-(lookback + 1):-1]
-    return recent.iloc[-1] < recent.iloc[0]
-
-
-# --- Signal detection combining NW Envelope + Inverted Hammer ---
-
-def detect_signals(df: pd.DataFrame) -> list[dict]:
+def detect_hammer_at_bands(df: pd.DataFrame) -> list[dict]:
     """
-    Detect signals combining NW Envelope zone + Inverted Hammer candle.
+    ONLY triggers when Inverted Hammer forms at envelope bands.
+    No other signals — hammer at band or nothing.
 
-    STRONG BUY fires when an Inverted Hammer forms at the lower envelope —
-    this is the highest-confidence bullish reversal signal.
+    Returns:
+        - HAMMER AT LOWER BAND → potential bullish reversal (BUY)
+        - HAMMER AT UPPER BAND → rejection at resistance (SELL)
     """
     if len(df) < 5:
         return []
 
-    signals = []
-    prev = df.iloc[-2]
     curr = df.iloc[-1]
 
     if pd.isna(curr["nw_upper"]) or pd.isna(curr["nw_lower"]):
         return []
 
-    atr_val = curr["atr"] if not pd.isna(curr["atr"]) else 0
     hammer = _is_inverted_hammer(curr["Open"], curr["High"], curr["Low"], curr["Close"])
-    downtrend = _has_prior_downtrend(df["Close"], lookback=3)
+    if not hammer:
+        return []
 
-    at_lower = curr["Close"] <= curr["nw_lower"]
-    crossed_lower = at_lower and prev["Close"] > prev["nw_lower"]
-    near_lower = (
-        not at_lower
-        and atr_val > 0
-        and 0 < (curr["Close"] - curr["nw_lower"]) <= 0.5 * atr_val
-    )
+    atr_val = curr["atr"] if not pd.isna(curr["atr"]) else 0
+    if atr_val == 0:
+        return []
 
-    # STRONG BUY: Hammer + envelope boundary
-    if hammer and (at_lower or near_lower) and downtrend:
+    signals = []
+    close = curr["Close"]
+    lower = curr["nw_lower"]
+    upper = curr["nw_upper"]
+    mid = curr["nw_mid"]
+
+    dist_to_lower = close - lower
+    dist_to_upper = upper - close
+
+    # Hammer at or near lower band (within 0.5× ATR)
+    if close <= lower or (0 < dist_to_lower <= 0.5 * atr_val):
+        band_label = "AT" if close <= lower else "NEAR"
         signals.append({
-            "type": "STRONG BUY",
-            "reason": "Inverted Hammer at lower envelope + downtrend (high-confidence reversal)",
-            "close": round(curr["Close"], 5),
-            "envelope": round(curr["nw_lower"], 5),
-            "mid": round(curr["nw_mid"], 5),
+            "type": "HAMMER AT LOWER BAND",
+            "direction": "BUY",
+            "band": "LOWER",
+            "band_position": band_label,
+            "reason": f"Inverted Hammer {band_label.lower()} lower NW band — bullish reversal",
+            "close": round(close, 5),
+            "lower_band": round(lower, 5),
+            "upper_band": round(upper, 5),
+            "mid": round(mid, 5),
             "atr": round(atr_val, 5),
-            "hammer": True,
-            "confluence": "NW Envelope + Inverted Hammer + Downtrend",
-        })
-    elif hammer and (at_lower or near_lower):
-        signals.append({
-            "type": "STRONG BUY",
-            "reason": "Inverted Hammer at lower envelope (bullish reversal)",
-            "close": round(curr["Close"], 5),
-            "envelope": round(curr["nw_lower"], 5),
-            "mid": round(curr["nw_mid"], 5),
-            "atr": round(atr_val, 5),
-            "hammer": True,
-            "confluence": "NW Envelope + Inverted Hammer",
-        })
-    elif crossed_lower:
-        signals.append({
-            "type": "BUY",
-            "reason": "Price crossed below lower envelope (oversold)",
-            "close": round(curr["Close"], 5),
-            "envelope": round(curr["nw_lower"], 5),
-            "mid": round(curr["nw_mid"], 5),
-            "atr": round(atr_val, 5),
-            "hammer": False,
-            "confluence": "NW Envelope only",
         })
 
-    # SELL: upper envelope
-    at_upper = curr["Close"] >= curr["nw_upper"]
-    crossed_upper = at_upper and prev["Close"] < prev["nw_upper"]
-
-    if crossed_upper:
+    # Hammer at or near upper band (within 0.5× ATR)
+    if close >= upper or (0 < dist_to_upper <= 0.5 * atr_val):
+        band_label = "AT" if close >= upper else "NEAR"
         signals.append({
-            "type": "SELL",
-            "reason": "Price crossed above upper envelope (overbought)",
-            "close": round(curr["Close"], 5),
-            "envelope": round(curr["nw_upper"], 5),
-            "mid": round(curr["nw_mid"], 5),
+            "type": "HAMMER AT UPPER BAND",
+            "direction": "SELL",
+            "band": "UPPER",
+            "band_position": band_label,
+            "reason": f"Inverted Hammer {band_label.lower()} upper NW band — overbought rejection",
+            "close": round(close, 5),
+            "lower_band": round(lower, 5),
+            "upper_band": round(upper, 5),
+            "mid": round(mid, 5),
             "atr": round(atr_val, 5),
-            "hammer": False,
-            "confluence": "NW Envelope only",
         })
-
-    # APPROACHING ZONES
-    if not signals and atr_val > 0:
-        dist_lower = curr["Close"] - curr["nw_lower"]
-        dist_upper = curr["nw_upper"] - curr["Close"]
-
-        if near_lower and hammer:
-            signals.append({
-                "type": "WATCH BUY",
-                "reason": "Inverted Hammer forming near lower envelope",
-                "close": round(curr["Close"], 5),
-                "envelope": round(curr["nw_lower"], 5),
-                "mid": round(curr["nw_mid"], 5),
-                "atr": round(atr_val, 5),
-                "hammer": True,
-                "confluence": "NW Envelope + Inverted Hammer (approaching)",
-            })
-        elif 0 < dist_lower <= 0.3 * atr_val:
-            signals.append({
-                "type": "NEAR BUY",
-                "reason": "Price approaching lower envelope",
-                "close": round(curr["Close"], 5),
-                "envelope": round(curr["nw_lower"], 5),
-                "mid": round(curr["nw_mid"], 5),
-                "atr": round(atr_val, 5),
-                "hammer": False,
-                "confluence": "NW Envelope only",
-            })
-
-        if 0 < dist_upper <= 0.3 * atr_val:
-            signals.append({
-                "type": "NEAR SELL",
-                "reason": "Price approaching upper envelope",
-                "close": round(curr["Close"], 5),
-                "envelope": round(curr["nw_upper"], 5),
-                "mid": round(curr["nw_mid"], 5),
-                "atr": round(atr_val, 5),
-                "hammer": False,
-                "confluence": "NW Envelope only",
-            })
 
     return signals
