@@ -1,0 +1,24 @@
+name: Forex NW Envelope Scan
+
+on:
+  schedule:
+    # Every 4 hours on weekdays
+    - cron: '0 4,8,12,16,20 * * 1-5'
+    # Crypto on weekends — twice daily
+    - cron: '0 8,16 * * 0,6'
+  workflow_dispatch:
+
+jobs:
+  forex-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run Forex NW Envelope scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --forex
