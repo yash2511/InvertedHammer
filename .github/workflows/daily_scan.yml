@@ -1,0 +1,29 @@
+name: Daily Inverted Hammer Scan
+
+on:
+  schedule:
+    # Runs at 9:15 AM UTC = 2:45 PM IST (Mon-Fri)
+    - cron: '15 9 * * 1-5'
+  workflow_dispatch:  # allows manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MARKET: ${{ secrets.MARKET }}
+        run: python main.py --now
