@@ -1,0 +1,3 @@
+usage: main.py [-h] [--nse] [--forex] [--forex-live] [--forex-backtest [DAYS]]
+               [--all] [--nse-history [DAYS]]
+main.py: error: unrecognized arguments: --now
